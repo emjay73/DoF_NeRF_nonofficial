@@ -1,11 +1,14 @@
 import os, sys
 import numpy as np
 import imageio
+import json
+import random
 import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm, trange
+
 import matplotlib.pyplot as plt
 
 import nerf_model
@@ -167,8 +170,7 @@ def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedi
 
 
 def create_nerf(args, N_image=0):
-    """
-    Instantiate NeRF's MLP model.
+    """Instantiate NeRF's MLP model.
     """
     embed_fn, input_ch = nerf_model.get_embedder(args.multires, args.i_embed)
 
@@ -178,32 +180,22 @@ def create_nerf(args, N_image=0):
         embeddirs_fn, input_ch_views = nerf_model.get_embedder(args.multires_views, args.i_embed)
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
-    model = nerf_model.NeRF(D=args.netdepth, 
-                            W=args.netwidth,
-                            input_ch=input_ch, 
-                            output_ch=output_ch, 
-                            skips=skips,
-                            input_ch_views=input_ch_views, 
-                            use_viewdirs=args.use_viewdirs).to(device)
+    model = nerf_model.NeRF(D=args.netdepth, W=args.netwidth,
+                 input_ch=input_ch, output_ch=output_ch, skips=skips,
+                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
     grad_vars = list(model.parameters())
 
     model_fine = None
     if args.N_importance > 0:
-        model_fine = nerf_model.NeRF(D=args.netdepth_fine, 
-                                     W=args.netwidth_fine,
-                                     input_ch=input_ch, 
-                                     output_ch=output_ch, 
-                                     skips=skips,
-                                     input_ch_views=input_ch_views, 
-                                     use_viewdirs=args.use_viewdirs).to(device)
+        model_fine = nerf_model.NeRF(D=args.netdepth_fine, W=args.netwidth_fine,
+                          input_ch=input_ch, output_ch=output_ch, skips=skips,
+                          input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
         grad_vars += list(model_fine.parameters())
 
-    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, 
-                                                                         viewdirs, 
-                                                                         network_fn,
-                                                                         embed_fn=embed_fn,
-                                                                         embeddirs_fn=embeddirs_fn,
-                                                                         netchunk=args.netchunk)
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
+                                                                embed_fn=embed_fn,
+                                                                embeddirs_fn=embeddirs_fn,
+                                                                netchunk=args.netchunk)
 
     if N_image:
         # bokeh_param = nerf_model.Bokeh_Param(N_image, activation=False)
