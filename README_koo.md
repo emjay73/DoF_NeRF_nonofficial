@@ -20,3 +20,9 @@
 
 # To do
 - 논문 참고하면서 새로운 train.py 같은 파일 만들어서 run_nerf.py의 train 함수와 같은 것 구현.
+
+# condigs
+- Deblur-NeRF 스타일 참고
+
+# load llff
+- LensNeRF dataset load를 위해 수정

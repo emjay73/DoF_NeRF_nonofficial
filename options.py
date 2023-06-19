@@ -2,13 +2,13 @@ def config_parser():
 
     import configargparse
     parser = configargparse.ArgumentParser()
-    parser.add_argument('--config', default='configs/bokeh/titan.txt', is_config_file=True, 
+    parser.add_argument('--config', is_config_file=True, 
                         help='config file path')
-    parser.add_argument("--expname", type=str, default='kendo_test',  
+    parser.add_argument("--expname", type=str, 
                         help='experiment name')
     parser.add_argument("--basedir", type=str, default='./logs/', 
                         help='where to store ckpts and logs')
-    parser.add_argument("--datadir", type=str, default='/data3/wuzijin/data/nerf/nerf_llff_data/horns', 
+    parser.add_argument("--datadir", type=str, default='./data/llff/fern', 
                         help='input data directory')
 
     # training options
@@ -24,8 +24,6 @@ def config_parser():
                         help='batch size (number of random rays per gradient step)')
     parser.add_argument("--lrate", type=float, default=5e-4, 
                         help='learning rate')
-    parser.add_argument("--lrate_bokeh",          type=float, default=2e-4, 
-                        help='learning rate')
     parser.add_argument("--lrate_decay", type=int, default=250, 
                         help='exponential learning rate decay (in 1000 steps)')
     parser.add_argument("--chunk", type=int, default=1024*32, 
@@ -38,6 +36,10 @@ def config_parser():
                         help='do not reload weights from saved ckpt')
     parser.add_argument("--ft_path", type=str, default=None, 
                         help='specific weights npy file to reload for coarse network')
+
+    # Only for DoF-NeRF
+    parser.add_argument("--lrate_bokeh",          type=float, default=2e-4, 
+                        help='learning rate')
     parser.add_argument("--N_iters",      type=int,   default=200000, 
                         help='Iters to Train Nerf Model')
     parser.add_argument("--bokeh_iters",      type=int,   default=0, 
@@ -46,7 +48,7 @@ def config_parser():
     # rendering options
     parser.add_argument("--N_samples", type=int, default=64, 
                         help='number of coarse samples per ray')
-    parser.add_argument("--N_importance", type=int, default=64,
+    parser.add_argument("--N_importance", type=int, default=0,
                         help='number of additional fine samples per ray')
     parser.add_argument("--perturb", type=float, default=1.,
                         help='set to 0. for no jitter, 1. for jitter')
@@ -71,8 +73,8 @@ def config_parser():
     # training options
     parser.add_argument("--precrop_iters", type=int, default=0,
                         help='number of steps to train on central crops')
-    parser.add_argument("--precrop_frac", type=float, default=.5,
-                         help='fraction of img taken for central crops') 
+    parser.add_argument("--precrop_frac", type=float,
+                        default=.5, help='fraction of img taken for central crops') 
 
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff', 
