@@ -37,7 +37,7 @@ class Bokeh_Param(nn.Module):
 class Embedder:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.create_embedding_fn() 
+        self.create_embedding_fn()
         
     def create_embedding_fn(self):
         embed_fns = []

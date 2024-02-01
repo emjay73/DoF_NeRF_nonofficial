@@ -30,8 +30,8 @@ def gaussian_blur(x, r, sigma=None):
     return x
 
 
-def render_bokeh(rgbs, 
-                 disps, 
+def render_bokeh(rgbs,
+                 disps,
                  K_bokeh=20, 
                  gamma=4, 
                  disp_focus=90/255, 

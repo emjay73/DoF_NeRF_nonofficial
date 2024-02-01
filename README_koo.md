@@ -26,3 +26,9 @@
 
 # load llff
 - LensNeRF dataset load를 위해 수정
+
+# train command
+`python run.py --config configs/{DATASET}.txt`
+
+# 논문 내용
+- 𝑁 images (params) in the training set I

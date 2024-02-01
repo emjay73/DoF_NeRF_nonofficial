@@ -40,9 +40,9 @@ def config_parser():
     # Only for DoF-NeRF
     parser.add_argument("--lrate_bokeh",          type=float, default=2e-4, 
                         help='learning rate')
-    parser.add_argument("--N_iters",      type=int,   default=200000, 
+    parser.add_argument("--N_iters",      type=int,   default=400000, 
                         help='Iters to Train Nerf Model')
-    parser.add_argument("--bokeh_iters",      type=int,   default=0, 
+    parser.add_argument("--bokeh_iters",      type=int,   default=200000, 
                         help='Extra Iters to Train Bokeh Parameters')
 
     # rendering options
@@ -113,7 +113,10 @@ def config_parser():
                         help='frequency of weight ckpt saving')
     parser.add_argument("--i_testset", type=int, default=50000, 
                         help='frequency of testset saving')
-    parser.add_argument("--i_video",   type=int, default=50000, 
+    parser.add_argument("--i_video",   type=int, default=500000000, 
                         help='frequency of render_poses video saving')
+    
+    parser.add_argument("--pose_path", type=str, required=False, help='video pose path')
+    parser.add_argument("--pose", type=str, required=False, help='video pose path')
 
     return parser

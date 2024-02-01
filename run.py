@@ -21,7 +21,7 @@ from dataloader.load_llff import load_llff_data
 # custom
 from nerf_utils import *
 from options import config_parser
-
+from bokeh_utils import render_path_bokeh, render_bokeh
 
 
 def train():
@@ -81,6 +81,7 @@ def train():
     basedir = args.basedir
     expname = args.expname
     os.makedirs(os.path.join(basedir, expname), exist_ok=True)
+    os.makedirs(os.path.join(basedir, expname, 'param'), exist_ok=True)
     f = os.path.join(basedir, expname, 'args.txt')
     with open(f, 'w') as file:
         for arg in sorted(vars(args)):
@@ -92,7 +93,7 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
-    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(args)
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer, bokeh_param = create_nerf(args, N_image=len(i_train))
     global_step = start
 
     bds_dict = {
@@ -120,7 +121,10 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', render_poses.shape)
 
-            rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            rgbs, _ = render_path_bokeh(render_poses, hwf, K, args.chunk, render_kwargs_test,
+                                  K_bokeh=1, gamma=4, disp_focus=30/255, defocus_scale=1,
+                                  gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
+            #rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
             print('Done rendering', testsavedir)
             imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
 
@@ -136,9 +140,14 @@ def train():
         print('done, concats')
         rays_rgb = np.concatenate([rays, images[:,None]], 1) # [N, ro+rd+rgb, H, W, 3]
         rays_rgb = np.transpose(rays_rgb, [0,2,3,1,4]) # [N, H, W, ro+rd+rgb, 3]
-        rays_rgb = np.stack([rays_rgb[i] for i in i_train], 0) # train images only
-        rays_rgb = np.reshape(rays_rgb, [-1,3,3]) # [(N-1)*H*W, ro+rd+rgb, 3]
+        rays_rgb_nhw = np.stack([rays_rgb[i] for i in i_train], 0) # train images only
+        train_idx = np.arange(rays_rgb_nhw.shape[0])
+        W_anchors = np.arange(79)
+        H_anchors = np.arange(52)
+        # W_anchor = 0~78, H_anchor = 0~51
+        rays_rgb = np.reshape(rays_rgb_nhw, [-1,3,3]) # [(N-1)*H*W, ro+rd+rgb, 3]
         rays_rgb = rays_rgb.astype(np.float32)
+        rays_rgb_nhw = rays_rgb_nhw.astype(np.float32)
         print('shuffle rays')
         np.random.shuffle(rays_rgb)
 
@@ -151,9 +160,11 @@ def train():
     poses = torch.Tensor(poses).to(device)
     if use_batching:
         rays_rgb = torch.Tensor(rays_rgb).to(device)
+        rays_rgb_nhw = torch.Tensor(rays_rgb_nhw).to(device)
 
 
     N_iters = args.N_iters + 1
+    bokeh_iters = args.bokeh_iters + 1
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -165,9 +176,8 @@ def train():
     start = start + 1
     for i in tqdm(trange(start, N_iters)):
         time0 = time.time()
-
-        # Sample random ray batch
-        if use_batching:
+        if i < bokeh_iters:
+            # Sample random ray batch
             # Random over all images
             batch = rays_rgb[i_batch:i_batch+N_rand] # [B, 2+1, 3*?]
             batch = torch.transpose(batch, 0, 1)
@@ -179,43 +189,67 @@ def train():
                 rand_idx = torch.randperm(rays_rgb.shape[0])
                 rays_rgb = rays_rgb[rand_idx]
                 i_batch = 0
+                
+            #####  Core optimization loop  #####
+            rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+                                                    verbose=i < 10, retraw=True,
+                                                    **render_kwargs_train)
 
         else:
+            if i == bokeh_iters:
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = args.lrate_bokeh
+                
             # Random from one image
-            img_i = np.random.choice(i_train)
-            target = images[img_i]
-            target = torch.Tensor(target).to(device)
-            pose = poses[img_i, :3,:4]
+            img_i = np.random.choice(train_idx)
+            batch = rays_rgb_nhw[img_i]  # [H, W, 2+1, 3]
+            H_anchor = np.random.choice(H_anchors)
+            W_anchor = np.random.choice(W_anchors)
+            batch_patch = batch[(16*H_anchor):(16*H_anchor+48), (16*W_anchor):(16*W_anchor+48), :, :]  # [48, 48, 2+1, 3]
+            batch = torch.reshape(batch_patch, [-1, 3, 3])  # [48*48, 2+1, 3]
+            #batch_idx = np.random.choice(batch.shape[0], size=[N_rand], replace=False)  # get 1024 rays from the patch
+            #batch = batch_flatten[batch_idx]  # [1024, 2+1, 3]
+            batch = torch.transpose(batch, 0, 1)
+            batch_rays, target_s = batch[:2], batch[2]
+            
+            # target = images[img_i]
+            # target = torch.Tensor(target).to(device)
+            # pose = poses[img_i, :3,:4]
 
-            if N_rand is not None:
-                rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+            # if N_rand is not None:
+            #     rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
 
-                if i < args.precrop_iters:
-                    dH = int(H//2 * args.precrop_frac)
-                    dW = int(W//2 * args.precrop_frac)
-                    coords = torch.stack(
-                        torch.meshgrid(
-                            torch.linspace(H//2 - dH, H//2 + dH - 1, 2*dH), 
-                            torch.linspace(W//2 - dW, W//2 + dW - 1, 2*dW)
-                        ), -1)
-                    if i == start:
-                        print(f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")                
-                else:
-                    coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+            #     if i < args.precrop_iters:
+            #         dH = int(H//2 * args.precrop_frac)
+            #         dW = int(W//2 * args.precrop_frac)
+            #         coords = torch.stack(
+            #             torch.meshgrid(
+            #                 torch.linspace(H//2 - dH, H//2 + dH - 1, 2*dH), 
+            #                 torch.linspace(W//2 - dW, W//2 + dW - 1, 2*dW)
+            #             ), -1)
+            #         if i == start:
+            #             print(f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")                
+            #     else:
+            #         coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
 
-                coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
-                select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
-                select_coords = coords[select_inds].long()  # (N_rand, 2)
-                rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-                rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-                batch_rays = torch.stack([rays_o, rays_d], 0)
-                target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            #     coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+            #     select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+            #     select_coords = coords[select_inds].long()  # (N_rand, 2)
+            #     rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            #     rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            #     batch_rays = torch.stack([rays_o, rays_d], 0)
+            #     target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
 
-        #####  Core optimization loop  #####
-        rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                verbose=i < 10, retraw=True,
-                                                **render_kwargs_train)
+            #####  Core optimization loop  #####
+            rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays, verbose=i < 10, retraw=True, **render_kwargs_train)
+            para_K_bokeh, para_disp_focus = bokeh_param()
 
+            rgbs = torch.reshape(rgb, [48, 48, 3])
+            disps = torch.reshape(disp, [48, 48])
+            bokeh_classical = render_bokeh(rgbs=rgbs, disps=disps, K_bokeh=para_K_bokeh[img_i], gamma=4, disp_focus=para_disp_focus[img_i], defocus_scale=1)
+            rgb = torch.reshape(bokeh_classical, [-1, 3])
+            target_s = torch.reshape(target_s, [-1, 3])
+        
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
         trans = extras['raw'][...,-1]
@@ -253,7 +287,10 @@ def train():
                 'optimizer_state_dict': optimizer.state_dict(),
             }, path)
             print('Saved checkpoints at', path)
-
+            
+            param_path = os.path.join(basedir, expname, 'param', '{:06d}.tar'.format(i))
+            torch.save(bokeh_param.state_dict(), param_path)
+            
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
@@ -275,7 +312,10 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', poses[i_test].shape)
             with torch.no_grad():
-                render_path(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test, gt_imgs=images[i_test], savedir=testsavedir)
+                render_path_bokeh(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test,
+                        K_bokeh=0, gamma=4, disp_focus=30/255, defocus_scale=1,
+                        gt_imgs=images[i_test], savedir=testsavedir)
+                                
             print('Saved test set')
 
 
