@@ -1,3 +1,11 @@
+# How to run
+```
+CUDA_VISIBLE_DEVICES={gpu_id} python run.py --config configs/{configfile_name}.txt
+```
+
+# dependency
+check the environment.yml
+
 # DoF-NeRF: Depth-of-Field Meets Neural Radiance Fields (ACMMM 2022)
 
 Zijin Wu<sup>1</sup>, 
